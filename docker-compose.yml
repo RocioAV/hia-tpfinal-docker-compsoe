@@ -1,0 +1,177 @@
+networks:
+  hia-final:
+    driver: bridge
+
+services:
+  pg-0:
+    image: 'bitnami/postgresql-repmgr:latest'
+    container_name: pg-0
+    environment:
+      - REPMGR_PRIMARY_HOST=pg-0
+      - REPMGR_PARTNER_NODES=pg-0,pg-1
+      - REPMGR_NODE_NAME=pg-0
+      - REPMGR_NODE_NETWORK_NAME=pg-0
+      - REPMGR_PASSWORD=repmgrpass
+      - POSTGRESQL_PASSWORD=pass
+      - REPMGR_FAILOVER_AUTO=true
+    ports:
+      - '5432:5432'
+    networks:
+      - hia-final
+    volumes:
+      - pg-0-data:/var/lib/postgresql/data
+    restart: always
+
+  pg-1:
+    image: 'bitnami/postgresql-repmgr:latest'
+    container_name: pg-1
+    depends_on:     
+      - pg-0
+    environment:
+      - REPMGR_PARTNER_NODES=pg-0,pg-1
+      - REPMGR_NODE_NAME=pg-1
+      - REPMGR_NODE_NETWORK_NAME=pg-1
+      - REPMGR_PRIMARY_HOST=pg-0
+      - REPMGR_PASSWORD=repmgrpass
+      - POSTGRESQL_PASSWORD=pass
+      - REPMGR_FAILOVER_AUTO=true
+    ports:
+      - '5433:5432'
+    networks:
+      - hia-final
+    volumes:
+      - pg-1-data:/var/lib/postgresql/data
+    restart: always
+
+  haproxy:
+    image: haproxy:latest
+    container_name: haproxy
+    ports:
+      - "5434:5434" # HAProxy escucha en el puerto 5434
+    depends_on:
+      - pg-0
+      - pg-1
+    networks:
+      - hia-final
+    volumes:
+      - ./config/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: pgadmin
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@admin.com
+      - PGADMIN_DEFAULT_PASSWORD=admin
+    ports:
+      - "5050:80" # Acceder a PGAdmin en el puerto 5050
+    depends_on:
+      - pg-0
+      - pg-1
+    networks:
+      - hia-final
+    volumes:
+      - pg_backups:/backups
+    restart: always 
+
+  backups:
+    image: 'bitnami/postgresql-repmgr:latest'
+    container_name: pg-backups
+    user: root
+    environment:
+      PG_HOST: haproxy
+      PG_PORT: 5434
+      PG_USER: postgres
+      PG_PASSWORD: pass
+      PG_DATABASE: quiosco #si usamos solo una database es bakup completo?
+      BACKUP_DIR: /backups
+    volumes:
+      - pg_backups:/backups
+      - ./script/backup.sh:/scripts/backup.sh
+    networks:
+      - hia-final
+    entrypoint: ["sh", "/scripts/backup.sh"]  # Ejecuta el script de backup al iniciar
+    restart: always
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - hia-final
+    restart: always
+
+  postgres-exporter:
+    image: bitnami/postgres-exporter:latest
+    environment:
+      - DATA_SOURCE_URI=haproxy:5434/?sslmode=disable
+      - DATA_SOURCE_USER=postgres
+      - DATA_SOURCE_PASS=pass
+    ports:
+      - "9187:9187"
+    networks:
+      - hia-final
+    depends_on:
+      - haproxy
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: node-exporter
+    ports:
+      - "9100:9100"
+    networks:
+      - hia-final
+    restart: always
+
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3001:3000"
+    networks:
+      - hia-final
+    depends_on:
+      - prometheus
+    volumes:
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    restart: always
+
+  app:
+    image: 'maurii9070/hia-quiosco-app:latest'
+    ports:      
+      - '3000:3000'
+    depends_on:
+      - haproxy
+    volumes:
+      - ./env/.env.local:/app/.env
+    networks:
+      - hia-final
+    command: > 
+      sh -c " 
+      sleep 15 &&
+      npx prisma migrate dev &&
+      npm run dev
+      "
+
+  watchtower:
+    image: containrrr/watchtower
+    container_name: watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_POLL_INTERVAL=20 # Intervalo en segundos para verificar actualizaciones0
+    networks:
+      - hia-final
+
+volumes:
+  pg-0-data:
+  pg-1-data:
+  pg_backups:
+  grafana-data:
