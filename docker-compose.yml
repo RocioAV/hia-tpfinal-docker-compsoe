@@ -70,7 +70,8 @@ services:
     networks:
       - hia-final
     volumes:
-      - pg_backups:/backups
+      - pg_backups:/var/lib/pgadmin/storage/admin_admin.com
+    user: root
     restart: always 
 
   backups:
@@ -82,7 +83,7 @@ services:
       PG_PORT: 5434
       PG_USER: postgres
       PG_PASSWORD: pass
-      PG_DATABASE: quiosco #si usamos solo una database es bakup completo?
+      PG_DATABASE: quiosco 
       BACKUP_DIR: /backups
     volumes:
       - pg_backups:/backups
@@ -105,6 +106,7 @@ services:
 
   postgres-exporter:
     image: bitnami/postgres-exporter:latest
+    container_name: postgres-exporter
     environment:
       - DATA_SOURCE_URI=haproxy:5434/?sslmode=disable
       - DATA_SOURCE_USER=postgres
@@ -144,6 +146,7 @@ services:
 
   app:
     image: 'maurii9070/hia-quiosco-app:latest'
+    container_name: app
     ports:      
       - '3000:3000'
     depends_on:
@@ -169,6 +172,7 @@ services:
       - WATCHTOWER_POLL_INTERVAL=20 # Intervalo en segundos para verificar actualizaciones0
     networks:
       - hia-final
+    command: app
 
 volumes:
   pg-0-data:
